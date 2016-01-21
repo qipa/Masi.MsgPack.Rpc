@@ -16,6 +16,7 @@ namespace Masi.MsgPackRpc.Server
         private readonly ConcurrentDictionary<int, TcpTransportChannel> _tcpChannels 
             = new ConcurrentDictionary<int, TcpTransportChannel>();
 
+        // TODO: configurable
         private const int MIN_ACCEPT_CONCURRENCY = 5;
 
         public TcpTransportManager(IPEndPoint endPoint, IRpcServerContext serverContext)

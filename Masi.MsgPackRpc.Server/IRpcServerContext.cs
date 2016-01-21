@@ -9,6 +9,6 @@ namespace Masi.MsgPackRpc.Server
     interface IRpcServerContext
     {
         ISerializationContext SerializationContext { get; }
-        IMessageDispatcher MessageDispatcher { get; }
+        IRequestDispatcher RequestDispatcher { get; }
     }
 }

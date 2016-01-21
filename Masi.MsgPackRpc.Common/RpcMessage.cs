@@ -9,22 +9,28 @@ using MsgPack.Serialization;
 
 namespace Masi.MsgPackRpc.Common
 {
+    public enum MessageType : byte
+    {
+        Request = 1, Response = 2
+    }
+
     public abstract class RpcMessage : IPackable, IUnpackable
     {
-        public abstract int MessageType { get; }
+        public abstract MessageType RequestType { get; }
 
         protected abstract void PackToMessageCore(Packer packer);
         protected abstract void UnpackFromMessageCore(Unpacker unpacker);
 
         public void PackToMessage(Packer packer, PackingOptions options)
         {
-            packer.Pack(MessageType);
+            packer.Pack((byte)RequestType);
+
             PackToMessageCore(packer);
         }
 
         public void UnpackFromMessage(Unpacker unpacker)
         {
-            if (MessageType != unpacker.LastReadData.AsInt32())
+            if (RequestType != (MessageType)unpacker.LastReadData.AsByte())
                 throw new InvalidMessagePackStreamException("Invalid message type");
 
             UnpackFromMessageCore(unpacker);

@@ -30,10 +30,18 @@ namespace Masi.MsgPackRpc.Common
 
         protected override RpcMessage UnpackFromCore(Unpacker unpacker)
         {
-            int typeCode = unpacker.LastReadData.AsInt32();
-            RpcMessage message = InitializeMessage(typeCode);
+            bool isRequest = ((MessageType)unpacker.LastReadData.AsByte()) == MessageType.Request;
 
-            ReadNext(unpacker);
+            RpcMessage message;
+            if (isRequest)
+            {
+                message = InitializeRequestMessage(unpacker);
+            }
+            else
+            {
+                message = InitializeResponseMessage(unpacker);
+            }
+
             message.UnpackFromMessage(unpacker);
 
             return message;
@@ -47,6 +55,7 @@ namespace Masi.MsgPackRpc.Common
             }
         }
 
-        protected abstract RpcMessage InitializeMessage(int typeCode);
+        protected abstract RpcRequest InitializeRequestMessage(Unpacker unpacker);
+        protected abstract RpcResponse InitializeResponseMessage(Unpacker unpacker);
     }
 }

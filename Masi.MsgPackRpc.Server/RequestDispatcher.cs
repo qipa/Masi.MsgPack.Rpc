@@ -9,84 +9,86 @@ using Masi.MsgPackRpc.Common;
 
 namespace Masi.MsgPackRpc.Server
 {
-    public interface IMessageDispatcher
+    public interface IRequestDispatcher
     {
-        void DispatchMessage(RpcMessage message);
+        void DispatchRequest(IChannelRequest request);
     }
 
-    public abstract class MessageDispatcher : IMessageDispatcher
+    public abstract class RequestDispatcher : IRequestDispatcher
     {
         private readonly int _maxThreads;
         private readonly ManualResetEventSlim _queueEvent = new ManualResetEventSlim(false);
-        private readonly ConcurrentQueue<RpcMessage> _queue = new ConcurrentQueue<RpcMessage>();
+        private readonly ConcurrentQueue<IChannelRequest> _queue = new ConcurrentQueue<IChannelRequest>();
 
         private int _threadCount = 0;
         private int _activeThreads = 0;
 
-        public MessageDispatcher(int maxThreads)
+        public RequestDispatcher(int maxThreads)
         {
             _maxThreads = maxThreads;
         }
 
-        public void DispatchMessage(RpcMessage message)
+        public void DispatchRequest(IChannelRequest request)
         {
-            _queue.Enqueue(message);
+            _queue.Enqueue(request);
             _queueEvent.Set();
 
             CheckStartThread();
         }
 
-        private void RunProcessMessages()
+        private void RunProcessRequests()
         {
-            RpcMessage message = null;
+            IChannelRequest request = null;
 
             while (true)
             {
-                if (!_queueEvent.Wait(10000))
+                if (!_queueEvent.Wait(30000))
                     break;
 
-                while (_queue.TryDequeue(out message))
+                while (_queue.TryDequeue(out request))
                 {
-                    DoProcessMessage(message);
+                    DoProcessRequests(request);
                 }
 
                 _queueEvent.Reset();
 
-                while (_queue.TryDequeue(out message))
+                // Avoids possible race condition with concurrent Enqueue->Set->Reset
+                while (_queue.TryDequeue(out request))
                 {
                     _queueEvent.Set();
-                    DoProcessMessage(message);
+                    DoProcessRequests(request);
                 }
             }
 
             Interlocked.Decrement(ref _threadCount);
 
-            if (_queue.TryDequeue(out message))
+            // Avoids possible race condition with concurrent LoopBreak->Enqueue->Set
+            if (_queue.TryDequeue(out request))
             {
                 _queueEvent.Set();
 
                 Interlocked.Increment(ref _threadCount);
-                DoProcessMessage(message);
-                RunProcessMessages();
+                DoProcessRequests(request);
+                RunProcessRequests();
             }
         }
 
-        private void DoProcessMessage(RpcMessage message)
+        private void DoProcessRequests(IChannelRequest request)
         {
             try
             {
                 Interlocked.Increment(ref _activeThreads);
-                ProcessMessage(message);
+                ProcessRequest(request);
                 Interlocked.Decrement(ref _activeThreads);
             }
             catch (Exception e)
             {
-                OnMessageException(message, e);
+                OnRequestException(request, e);
             }
         }
 
-        public abstract void ProcessMessage(RpcMessage message);
-        public abstract void OnMessageException(RpcMessage message, Exception exception);
+        public abstract void ProcessRequest(IChannelRequest request);
+        public abstract void OnRequestException(IChannelRequest request, Exception exception);
 
         private void CheckStartThread()
         {
@@ -110,7 +112,7 @@ namespace Masi.MsgPackRpc.Server
                 if (Interlocked.CompareExchange(ref _threadCount, newThreadCount, curThreadCount) == curThreadCount)
                 {
                     // Spawn new thread
-                    new Thread(RunProcessMessages) { IsBackground = true }.Start();
+                    new Thread(RunProcessRequests) { IsBackground = true }.Start();
                     return;
                 }
 

@@ -23,7 +23,7 @@ namespace Masi.MsgPackRpc.Server
 
         protected abstract SerializationContext CreateSerializationContext();
         protected abstract RpcMessageSerializer CreateMessageSerializer(SerializationContext ownerContext);
-        protected abstract IMessageDispatcher CreateMessageDispatcher();
+        protected abstract IRequestDispatcher CreateRequestDispatcher();
 
 
         private class RpcServerContext : IRpcServerContext
@@ -32,7 +32,7 @@ namespace Masi.MsgPackRpc.Server
             private readonly ISerializationContext _serializationContext;
             private readonly object _lock = new object();
 
-            private volatile IMessageDispatcher _msgDispatcher;
+            private volatile IRequestDispatcher _requestDispatcher;
 
             public RpcServerContext(RpcServer server)
             {
@@ -45,22 +45,22 @@ namespace Masi.MsgPackRpc.Server
                 get { return _serializationContext; }
             }
 
-            public IMessageDispatcher MessageDispatcher
+            public IRequestDispatcher RequestDispatcher
             {
                 get 
                 { 
-                    if (_msgDispatcher == null)
+                    if (_requestDispatcher == null)
                     {
                         lock (_lock)
                         {
-                            if (_msgDispatcher == null) // Double lock check
+                            if (_requestDispatcher == null) // Double lock check
                             {
-                                _msgDispatcher = _server.CreateMessageDispatcher();
+                                _requestDispatcher = _server.CreateRequestDispatcher();
                             }
                         }
                     }
 
-                    return _msgDispatcher;
+                    return _requestDispatcher;
                 }
             }
         }

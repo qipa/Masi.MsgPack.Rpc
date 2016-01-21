@@ -51,7 +51,7 @@ namespace Masi.MsgPackRpc.Test
     {
         private string _str = "Asd";
 
-        public override int MessageType
+        public override int RpcType
         {
             get { return 1; }
         }

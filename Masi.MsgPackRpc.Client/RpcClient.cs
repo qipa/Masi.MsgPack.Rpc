@@ -59,9 +59,7 @@ namespace Masi.MsgPackRpc.Client
         public void TestSend(RpcMessage message)
         {
             var bytes = Serializer.PackSingleObject(message);
-            _sock.Send(new byte[] { 1, 0, 0, 0 }); // Version + reserved + protocol code
-            _sock.Send(BitConverter.GetBytes((ushort)0)); // Message id
-            _sock.Send(BitConverter.GetBytes((ushort)0)); // Message type
+            _sock.Send(new byte[] { 1, 0, 0, 0 }); // Version + reserved + frame id + protocol code
             _sock.Send(BitConverter.GetBytes(bytes.Length)); // Message len
             _sock.Send(bytes);
         }

@@ -10,17 +10,15 @@ namespace Masi.MsgPackRpc.Common
     public class ByteArraySegmentedStream : Stream
     {
         private readonly LinkedList<ArraySegment<byte>> _segments;
-        private readonly bool _autoTruncate;
 
         private long _length = 0;
         private LinkedListNode<ArraySegment<byte>> _curSegment;
         private long _positionInSegment = 0;
         private long _position = 0;
 
-        public ByteArraySegmentedStream(bool autoTruncate)
+        public ByteArraySegmentedStream()
         {
             _segments = new LinkedList<ArraySegment<byte>>();
-            _autoTruncate = autoTruncate;
         }
 
         public override bool CanRead
@@ -30,7 +28,7 @@ namespace Masi.MsgPackRpc.Common
 
         public override bool CanSeek
         {
-            get { return !_autoTruncate; }
+            get { return false; }
         }
 
         public override bool CanWrite
@@ -48,12 +46,14 @@ namespace Masi.MsgPackRpc.Common
             get { return _position; }
             set
             {
-                if (value < 0)
+                throw new NotSupportedException();
+
+                /*if (value < 0)
                 {
                     throw new ArgumentOutOfRangeException("value");
                 }
 
-                Seek(value, SeekOrigin.Begin);
+                Seek(value, SeekOrigin.Begin);*/
             }
         }
 
@@ -79,7 +79,7 @@ namespace Masi.MsgPackRpc.Common
 
         private void DoAutoTruncate()
         {
-            if (_autoTruncate && _segments.Count > 0)
+            if (_segments.Count > 0)
             {
                 if (_curSegment == _segments.First)
                 {
@@ -161,12 +161,11 @@ namespace Masi.MsgPackRpc.Common
 
         public override long Seek(long offset, SeekOrigin origin)
         {
-            if (_autoTruncate)
-            {
-                throw new InvalidOperationException("Unable to seek with auto truncation");
-            }
+            throw new NotSupportedException();
 
-            switch (origin)
+            // Seek no longer supported because of auto truncation
+            // Seeking is not really needed
+            /*switch (origin)
             {
                 case SeekOrigin.Begin:
                     Seek(offset - _position);
@@ -181,9 +180,10 @@ namespace Masi.MsgPackRpc.Common
                     throw new ArgumentException("Unknown origin value", "origin");
             }
 
-            return _position;
+            return _position;*/
         }
 
+        /*
         private void Seek(long relativeOffset)
         {
             if (relativeOffset == -_position)
@@ -261,6 +261,7 @@ namespace Masi.MsgPackRpc.Common
             _positionInSegment = newPosInSegment;
             _position = newPos;
         }
+        */
 
         public override void SetLength(long value)
         {

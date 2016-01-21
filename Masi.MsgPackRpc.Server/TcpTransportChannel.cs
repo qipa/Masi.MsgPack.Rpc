@@ -20,14 +20,16 @@ namespace Masi.MsgPackRpc.Server
         private readonly Socket _sock;
         private readonly IRpcServerContext _serverContext;
         private readonly int _id;
-        private readonly ConcurrentQueue<ArraySegment<byte>> _recvQueue;
 
-        private byte[] _currentBuffer;
-        private int _currentBufferOffset;
-
+        private readonly ConcurrentQueue<ArraySegment<byte>> _recvQueue = new ConcurrentQueue<ArraySegment<byte>>();
         private readonly AutoResetEvent _recvEvent = new AutoResetEvent(false);
 
+        private byte[] _recvBuffer;
+        private int _recvBufferOffset;
+
+        // TODO: configurable
         private const int BUFFER_SIZE = 65536;
+        private const int MAX_BODY_SIZE = 262144;
 
         public TcpTransportChannel(Socket socket, IRpcServerContext serverContext)
         {
@@ -36,9 +38,8 @@ namespace Masi.MsgPackRpc.Server
 
             _serverContext = serverContext;
 
-            _recvQueue = new ConcurrentQueue<ArraySegment<byte>>();
-            _currentBuffer = new byte[BUFFER_SIZE];
-            _currentBufferOffset = 0;
+            _recvBuffer = new byte[BUFFER_SIZE];
+            _recvBufferOffset = 0;
 
             BeginReceive(BUFFER_SIZE);
 
@@ -52,34 +53,34 @@ namespace Masi.MsgPackRpc.Server
 
         private void BeginReceive(int numBytes)
         {
-            _sock.BeginReceive(_currentBuffer, _currentBufferOffset, numBytes, SocketFlags.None, OnReceive, null);
+            _sock.BeginReceive(_recvBuffer, _recvBufferOffset, numBytes, SocketFlags.None, OnReceive, null);
         }
 
         private void OnReceive(IAsyncResult res)
         {
             int received = _sock.EndReceive(res);
 
-            _recvQueue.Enqueue(new ArraySegment<byte>(_currentBuffer, _currentBufferOffset, received));
+            _recvQueue.Enqueue(new ArraySegment<byte>(_recvBuffer, _recvBufferOffset, received));
             _recvEvent.Set();
 
-            _currentBufferOffset += received;
+            _recvBufferOffset += received;
 
-            if (_currentBufferOffset == BUFFER_SIZE)
+            if (_recvBufferOffset == BUFFER_SIZE)
             {
-                _currentBuffer = new byte[BUFFER_SIZE];
-                _currentBufferOffset = 0;
+                _recvBuffer = new byte[BUFFER_SIZE];
+                _recvBufferOffset = 0;
             }
 
-            BeginReceive(BUFFER_SIZE - _currentBufferOffset);
+            BeginReceive(BUFFER_SIZE - _recvBufferOffset);
         }
 
         private void ReadReceiveBuffer()
         {
-            var stream = new ByteArraySegmentedStream(true);
+            var stream = new ByteArraySegmentedStream();
             var reader = new BinaryReader(stream);
 
             int recvBytes = 0;
-            int? msgLen = null;
+            RpcFrame frame = null;
 
             while (true)
             {
@@ -93,56 +94,113 @@ namespace Masi.MsgPackRpc.Server
                     stream.AddSegment(segment);
                     recvBytes += segment.Count;
 
-                    while (stream.Length > 0)
+                    ProcessFrames(reader, ref recvBytes, ref frame);
+                }
+            }
+        }
+
+        private void ProcessFrames(BinaryReader reader, ref int recvBytes, ref RpcFrame frame)
+        {
+            bool continueRead = false;
+
+            do
+            {
+                if (frame == null && recvBytes >= 8)
+                {
+                    // Frame received
+                    byte version = reader.ReadByte();
+                    byte reserved = reader.ReadByte();
+                    byte frameId = reader.ReadByte();
+                    byte protocolCode = reader.ReadByte();
+                    int bodyLen = reader.ReadInt32();
+
+                    if (version == 1 && reserved == 0 && protocolCode == 0)
                     {
-                        long prevPos = stream.Position;
-
-                        if (!msgLen.HasValue && recvBytes >= 16)
+                        if (bodyLen >= 0 && bodyLen <= MAX_BODY_SIZE)
                         {
-                            byte version = reader.ReadByte();
-                            short reserved = reader.ReadInt16();
-                            byte protocolCode = reader.ReadByte();
-
-                            if (version == 1 && reserved == 0 && protocolCode == 0)
-                            {
-                                ushort messageId = reader.ReadUInt16();
-                                ushort messageType = reader.ReadUInt16();
-
-                                msgLen = reader.ReadInt32();
-
-                                if (msgLen.Value < 0)
-                                {
-                                    // Invalid header
-                                }
-                            }
-                            else
-                            {
-                                // Invalid header, close the connection
-                            }
-
-                            recvBytes -= 16;
+                            frame = new RpcFrame();
+                            frame.FrameId = frameId;
+                            frame.BodyLen = bodyLen;
                         }
-
-                        if (msgLen.HasValue && recvBytes >= msgLen.Value)
+                        else
                         {
-                            // Full message received
-
-                            var messageBody = reader.ReadBytes(msgLen.Value);
-
-                            MessagePackSerializer<RpcMessage> serializer = _serverContext.SerializationContext.Serializer;
-                            RpcMessage message = serializer.UnpackSingleObject(messageBody);
-
-                            _serverContext.MessageDispatcher.DispatchMessage(message);
-                            
-                            recvBytes -= msgLen.Value;
-                            msgLen = null; // Indicate to start reading of next frame
+                            // Invalid header
                         }
+                    }
+                    else
+                    {
+                        // Invalid header, close the connection
+                    }
 
-                        if (stream.Position == prevPos)
-                            break; // Nothing read, continue dequeing segments
+                    recvBytes -= 8;
+                    continueRead = true;
+                }
+
+                if (frame != null)
+                {
+                    if (frame.BodyLen == 0)
+                    {
+                        frame = null; // Start reading of next frame
+                        continueRead = true;
+                    }
+                    else if (recvBytes >= frame.BodyLen)
+                    {
+                        // Frame body received
+
+                        byte[] frameBody = reader.ReadBytes(frame.BodyLen);
+
+                        MessagePackSerializer<RpcMessage> serializer = _serverContext.SerializationContext.Serializer;
+                        RpcRequest request = (RpcRequest)serializer.UnpackSingleObject(frameBody);
+
+                        ChannelRequest channelRequest = new ChannelRequest(this, frame.FrameId, request);
+
+                        _serverContext.RequestDispatcher.DispatchRequest(channelRequest);
+
+                        recvBytes -= frame.BodyLen;
+                        frame = null; // Start reading of next frame
+                        continueRead = true;
                     }
                 }
             }
+            while (continueRead);
+        }
+
+        internal void SendResponse(ChannelRequest request, RpcResponse response)
+        {
+            MessagePackSerializer<RpcMessage> serializer = _serverContext.SerializationContext.Serializer;
+
+            using (var stream = new MemoryStream())
+            {
+                var writer = new BinaryWriter(stream);
+                writer.Write((byte)0);
+                writer.Write((byte)0);
+                writer.Write((byte)request.FrameId);
+                writer.Write((byte)0);
+                writer.Write((int)0); // Dummy value replaced
+
+                int prevPos = (int)stream.Position;
+                serializer.Pack(stream, response);
+                int bodyLen = (int)stream.Position - prevPos;
+
+                // Set the body len to frame head
+
+                stream.Seek(4, SeekOrigin.Begin);
+                writer.Write((int)bodyLen);
+
+                byte[] buffer = stream.GetBuffer();
+                _sock.BeginSend(buffer, 0, buffer.Length, SocketFlags.None, OnSend, null);
+            }
+        }
+
+        private void OnSend(IAsyncResult ar)
+        {
+            _sock.EndSend(ar);
+        }
+
+        private class RpcFrame
+        {
+            public byte FrameId;
+            public int BodyLen;
         }
     }
 }
